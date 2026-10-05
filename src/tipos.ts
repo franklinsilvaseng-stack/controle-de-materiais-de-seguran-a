@@ -99,6 +99,7 @@ export type Acesso = {
   licenca_status: string;
   plan: string;
   expires_at: string | null;
+  senha: string | null;
 };
 
 export type Pacote = {

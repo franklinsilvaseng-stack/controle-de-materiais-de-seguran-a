@@ -105,6 +105,8 @@ a { color: var(--pp-petroleo); }
 .tabela { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 .tabela th, .tabela td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--pp-bege); vertical-align: top; }
 .tabela th { background: var(--pp-bege); }
+.tabela input { width: 100%; min-width: 140px; border: 1px solid var(--pp-oliva); border-radius: 8px; padding: 8px 10px; background: #fff; }
+.tabela .acoes { margin-top: 8px; }
 .linha-zero { background: var(--pp-zero); font-weight: 700; }
 .vazio, .erro, .banner {
   padding: 12px;

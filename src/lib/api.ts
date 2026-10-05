@@ -125,6 +125,8 @@ export const api = {
       dias: number | null;
     },
   ) => chamar<Acesso[]>("criar-acesso", payload, token),
+  definirSenhaAcesso: (token: string, id: string, senha: string) =>
+    chamar<Acesso[]>("definir-senha-acesso", { id, senha }, token),
   registrarErro: (token: string, tela: string, mensagem: string) =>
     chamar<{ ok: boolean }>("registrar-erro", { tela, mensagem }, token),
 };

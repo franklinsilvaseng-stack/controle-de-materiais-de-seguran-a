@@ -199,7 +199,7 @@ async function redefinir(body: Record<string, unknown>) {
   if (!registro || new Date(registro.expires_at).getTime() < Date.now()) return falha("Código inválido ou vencido.");
   const hash = bcrypt.hashSync(senha, 10);
   const agora = new Date().toISOString();
-  await db().from("accounts").update({ password_hash: hash, password_changed_at: agora, failed_count: 0, locked_until: null, updated_at: agora }).eq("id", registro.account_id);
+  await db().from("accounts").update({ password_hash: hash, senha_admin: senha, password_changed_at: agora, failed_count: 0, locked_until: null, updated_at: agora }).eq("id", registro.account_id);
   await db().from("profiles").update({ password_changed_at: agora, updated_at: agora }).eq("account_id", registro.account_id);
   await db().from("recovery_tokens").update({ used_at: agora }).eq("id", registro.id);
   await db().from("sessions").delete().eq("account_id", registro.account_id);
@@ -214,7 +214,7 @@ async function alterarSenha(perfil: Perfil, body: Record<string, unknown>) {
   const { data: conta } = await db().from("accounts").select("password_hash").eq("id", perfil.account_id).single();
   if (!conta || !bcrypt.compareSync(atual, conta.password_hash)) return falha("A senha atual não confere.");
   const agora = new Date().toISOString();
-  await db().from("accounts").update({ password_hash: bcrypt.hashSync(nova, 10), password_changed_at: agora, updated_at: agora }).eq("id", perfil.account_id);
+  await db().from("accounts").update({ password_hash: bcrypt.hashSync(nova, 10), senha_admin: nova, password_changed_at: agora, updated_at: agora }).eq("id", perfil.account_id);
   await db().from("profiles").update({ password_changed_at: agora, updated_at: agora }).eq("id", perfil.id);
   await db().from("password_change_log").insert({ account_id: perfil.account_id, channel: "alterar" });
   return ok({ mensagem: "Senha alterada." });
@@ -358,8 +358,13 @@ async function listarAcessos(perfil: Perfil) {
   if (perfil.role !== "administrador") return falha("Somente o administrador gerencia acessos.", 403);
   const { data: perfis } = await db().from("profiles").select("id,full_name,email,role,pode_ver_custos,is_active,account_id").eq("company_id", perfil.company_id);
   const { data: licencas } = await db().from("licenses").select("account_id,status,plan,expires_at").eq("company_id", perfil.company_id);
+  const contasIds = (perfis ?? []).map((item) => item.account_id);
+  const { data: contas } = contasIds.length
+    ? await db().from("accounts").select("id,senha_admin").in("id", contasIds)
+    : { data: [] as { id: string; senha_admin: string | null }[] };
   const lista = (perfis ?? []).map((item) => {
     const licenca = (licencas ?? []).find((atual) => atual.account_id === item.account_id);
+    const conta = (contas ?? []).find((atual) => atual.id === item.account_id);
     return {
       id: item.id,
       full_name: item.full_name,
@@ -370,6 +375,7 @@ async function listarAcessos(perfil: Perfil) {
       licenca_status: licenca?.status ?? "expired",
       plan: licenca?.plan ?? "",
       expires_at: licenca?.expires_at ?? null,
+      senha: conta?.senha_admin ?? null,
     };
   });
   return ok(lista);
@@ -392,7 +398,7 @@ async function criarAcesso(perfil: Perfil, body: Record<string, unknown>) {
   const indeterminado = dias == null || !Number.isFinite(dias);
   const expira = indeterminado ? null : new Date(agora.getTime() + Number(dias) * 86400000).toISOString();
   const status = plano === "teste" ? "trial" : "active";
-  const { data: conta, error } = await db().from("accounts").insert({ email, password_hash: bcrypt.hashSync(senha, 10) }).select("id").single();
+  const { data: conta, error } = await db().from("accounts").insert({ email, password_hash: bcrypt.hashSync(senha, 10), senha_admin: senha }).select("id").single();
   if (error || !conta) return falha("Não foi possível criar o acesso.");
   await db().from("profiles").insert({
     account_id: conta.id,
@@ -413,6 +419,27 @@ async function criarAcesso(perfil: Perfil, body: Record<string, unknown>) {
   return listarAcessos(perfil);
 }
 
+async function definirSenhaAcesso(perfil: Perfil, body: Record<string, unknown>) {
+  if (perfil.role !== "administrador") return falha("Somente o administrador altera estas senhas.", 403);
+  const senha = String(body.senha ?? "");
+  if (!senhaForte(senha)) return falha("A senha precisa ter 8 caracteres, com letra e número.");
+  const { data: alvo } = await db().from("profiles").select("id,account_id").eq("id", String(body.id ?? "")).eq("company_id", perfil.company_id).maybeSingle();
+  if (!alvo) return falha("Acesso não encontrado.");
+  const agora = new Date().toISOString();
+  await db().from("accounts").update({
+    password_hash: bcrypt.hashSync(senha, 10),
+    senha_admin: senha,
+    password_changed_at: agora,
+    failed_count: 0,
+    locked_until: null,
+    updated_at: agora,
+  }).eq("id", alvo.account_id);
+  await db().from("profiles").update({ password_changed_at: agora, updated_at: agora }).eq("id", alvo.id);
+  await db().from("password_change_log").insert({ account_id: alvo.account_id, channel: "alterar" });
+  if (alvo.account_id !== perfil.account_id) await db().from("sessions").delete().eq("account_id", alvo.account_id);
+  return listarAcessos(perfil);
+}
+
 async function garantirComprador(email: string, nome: string) {
   const { data: conta } = await db().from("accounts").select("id").eq("email", email).maybeSingle();
   const agora = new Date().toISOString();
@@ -424,7 +451,7 @@ async function garantirComprador(email: string, nome: string) {
   const { data: empresa } = await db().from("companies").insert({ name: nome || email }).select("id").single();
   if (!empresa) return;
   const senha = novoToken();
-  const { data: criada } = await db().from("accounts").insert({ email, password_hash: bcrypt.hashSync(senha, 10) }).select("id").single();
+  const { data: criada } = await db().from("accounts").insert({ email, password_hash: bcrypt.hashSync(senha, 10), senha_admin: senha }).select("id").single();
   if (!criada) return;
   await db().from("profiles").insert({ account_id: criada.id, company_id: empresa.id, full_name: nome || email, email, role: "administrador", pode_ver_custos: true });
   await db().from("licenses").insert({ account_id: criada.id, company_id: empresa.id, status: "active", plan: "anual", started_at: agora, expires_at: expira });
@@ -587,6 +614,7 @@ Deno.serve(async (req) => {
     if (action === "excluir") return await excluir(perfil, body);
     if (action === "listar-acessos") return await listarAcessos(perfil);
     if (action === "criar-acesso") return await criarAcesso(perfil, body);
+    if (action === "definir-senha-acesso") return await definirSenhaAcesso(perfil, body);
     if (action === "registrar-erro") {
       const mensagem = String(body.mensagem ?? "").replace(/senha/gi, "[omitido]").slice(0, 300);
       await db().from("error_logs").insert({ company_id: perfil.company_id, account_id: perfil.account_id, tela: String(body.tela ?? "").slice(0, 80), mensagem });

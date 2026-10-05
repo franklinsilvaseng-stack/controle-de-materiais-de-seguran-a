@@ -82,6 +82,7 @@ export function Usuarios() {
   const [plano, setPlano] = useState("teste");
   const [dias, setDias] = useState("7");
   const [enviando, setEnviando] = useState(false);
+  const [novas, setNovas] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (pacote.perfil.role !== "administrador") return;
@@ -91,6 +92,25 @@ export function Usuarios() {
   }, [token, pacote.perfil.role]);
 
   if (pacote.perfil.role !== "administrador") return <p className="vazio">Somente o administrador gerencia acessos.</p>;
+
+  async function definirSenha(id: string) {
+    const valor = (novas[id] ?? "").trim();
+    if (valor.length < 8) {
+      avisar("A senha precisa ter 8 caracteres, com letra e número.", "aviso");
+      return;
+    }
+    setEnviando(true);
+    try {
+      const atualizada = await api.definirSenhaAcesso(token, id, valor);
+      setLista(atualizada);
+      setNovas((atual) => ({ ...atual, [id]: "" }));
+      avisar("Senha atualizada.");
+    } catch (falha) {
+      avisar(falha instanceof Error ? falha.message : "Não foi possível salvar a senha.", "erro");
+    } finally {
+      setEnviando(false);
+    }
+  }
 
   async function criar(evento: FormEvent) {
     evento.preventDefault();
@@ -121,10 +141,11 @@ export function Usuarios() {
   return (
     <section className="grade">
       <Titulo>Acessos</Titulo>
+      <p>A senha fica visível só para o administrador. Acessos já criados aparecem como “Não registrada” até você salvar uma nova senha na linha.</p>
       <form className="cartao grade" onSubmit={criar}>
         <label className="campo">Nome<input required value={nome} onChange={(e) => setNome(e.target.value)} /></label>
         <label className="campo">E-mail<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <CampoSenha rotulo="Senha inicial" autoComplete="new-password" value={senha} onChange={setSenha} />
+        <label className="campo">Senha<input type="text" autoComplete="off" required value={senha} onChange={(e) => setSenha(e.target.value)} /></label>
         <label className="campo">Papel
           <select value={papel} onChange={(e) => setPapel(e.target.value as Papel)}>
             <option value="operador">Técnico</option>
@@ -148,12 +169,19 @@ export function Usuarios() {
       {erro ? <p className="erro">{erro}</p> : null}
       {lista.length ? (
         <table className="tabela">
-          <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Custos</th><th>Licença</th></tr></thead>
+          <thead><tr><th>Nome</th><th>E-mail</th><th>Senha</th><th>Papel</th><th>Custos</th><th>Licença</th></tr></thead>
           <tbody>
             {lista.map((item) => (
               <tr key={item.id}>
                 <td>{item.full_name}</td>
                 <td>{item.email}</td>
+                <td>
+                  <strong>{item.senha || "Não registrada"}</strong>
+                  <form className="acoes" onSubmit={(evento) => { evento.preventDefault(); void definirSenha(item.id); }}>
+                    <input aria-label={`Nova senha de ${item.full_name}`} type="text" value={novas[item.id] ?? ""} placeholder="Nova senha" onChange={(evento) => setNovas((atual) => ({ ...atual, [item.id]: evento.target.value }))} />
+                    <button className="botao-secundario" type="submit" disabled={enviando}>Salvar</button>
+                  </form>
+                </td>
                 <td>{item.role === "operador" ? "Técnico" : item.role === "administrador" ? "Administrador" : "Consulta"}</td>
                 <td>{item.pode_ver_custos || item.role === "administrador" ? "Sim" : "Não"}</td>
                 <td>{item.plan} · {item.expires_at ? formatarData(item.expires_at) : "sem término"}</td>
